@@ -1,0 +1,154 @@
+plugins {
+    // This plugin allows you to create different environments
+    // for your gradle deploy. Each environment is represented
+    // by a gradle-${env}.properties file
+    // See https://github.com/stevesaliman/gradle-properties-plugin
+    // specify the env on the command line with:
+    // gradle -PenvironmentName=x ...
+    id 'net.saliman.properties' version '1.4.6'
+
+    // This gradle plugin extends the ml-gradle plugin with
+    // commands that make the Data Hub Framework do its magic
+    id 'com.marklogic.ml-data-hub' version '4.2.1'
+}
+
+repositories {
+  jcenter()
+  maven { url "http://developer.marklogic.com/maven2/" }
+}
+
+configurations {
+  mlcp
+}
+
+dependencies {
+  mlcp "com.marklogic:mlcp:9.0.8"
+  mlcp files("lib")
+}
+/*
+task sample(type: com.marklogic.gradle.task.MlcpTask) {
+  classpath = configurations.mlcp
+  command = "IMPORT"
+  database = "my-database"
+  input_file_path = "my-input-file.txt"
+  input_file_type = "delimited_text"
+  output_collections = "my-collection"
+  // Can also override the default properties
+  // username = "some-other-username"
+  etc...
+}
+*/
+
+fileTree("data").each{file->
+    def parentFullPath = file.parent
+    def parentDir = parentFullPath.tokenize('/').last()
+    def parentPath = parentFullPath.substring(parentFullPath.indexOf("data")-1)
+    def fileName = file.name
+    def fileNamePrefix = fileName.substring(0,fileName.indexOf('.'))
+    def fileExt = file.name.replaceAll(/.*\./,"").toLowerCase()
+    def cleanFileName = fileNamePrefix+'.'+fileExt
+    def cleanParentPath = parentPath.replaceAll(/[\/\\]/,"+")
+    if (fileExt == 'csv') {
+        /*
+        println '********************'
+        println 'parentFullPath: '+parentFullPath
+        println 'parentDir: '+parentDir
+        println 'parentPath: '+parentPath
+        println 'fileName: '+fileName
+        println 'fileNamePrefix: '+fileNamePrefix
+        println 'fileExt: '+fileExt
+        println 'cleanFileName: '+cleanFileName
+        */
+        task "import+CSV$cleanParentPath+$cleanFileName"(type: com.marklogic.gradle.task.MlcpTask) {
+            classpath = configurations.mlcp
+            command = "IMPORT" 
+            port = Integer.parseInt(mlStagingPort)
+            database = mlStagingDbName
+            input_file_path = parentFullPath
+            input_file_pattern = fileName
+            input_file_type = "delimited_text"
+            delimiter = ";"
+            output_collections = "input,$fileExt,$fileNamePrefix,$parentDir,$parentPath/$cleanFileName"
+            filename_as_collection = false
+            output_permissions = "rest-reader,read,rest-writer,update"
+            output_uri_replace = ".*data,''"
+            output_uri_prefix = "$parentPath/$cleanFileName/row/"
+            document_type = "json"
+        }
+    }
+    if (fileExt == 'txt') {
+        task "import+HTML$cleanParentPath+$cleanFileName"(type: com.marklogic.gradle.task.MlcpTask) {
+            classpath = configurations.mlcp
+            command = "IMPORT"
+            port = Integer.parseInt(mlStagingPort)
+            database = mlStagingDbName
+            input_file_path = parentFullPath
+            input_file_pattern = fileName
+            output_collections = "input,$fileExt,$fileNamePrefix,$parentDir,$parentPath/$cleanFileName"
+            output_permissions = "rest-reader,read,rest-writer,update"
+            document_type = "text"
+            //xml_repair_level = "full"
+            output_uri_replace = ".*$fileName,''"
+            output_uri_prefix = "$parentPath/$cleanFileName"
+        }
+    }
+    if (fileExt == 'pdf') {
+        /*
+        task "import+PDF$cleanParentPath+$cleanFileName"(type: com.marklogic.gradle.task.MlcpTask) {
+            classpath = configurations.mlcp
+            command = "IMPORT"
+            port = Integer.parseInt(mlStagingPort)
+            database = mlStagingDbName
+            input_file_path = parentFullPath
+            input_file_pattern = fileName
+            output_collections = "input,$fileExt,$parentPath/$cleanFileName"
+            output_permissions = "rest-reader,read,rest-writer,update"
+            document_type = "binary"
+            output_uri_replace = ".*$fileName,''"
+            output_uri_prefix = "$parentPath/$cleanFileName"
+        }
+        */
+    }
+    if (fileExt == 'jpg' || fileExt == 'png' || fileExt == 'mp4') {
+        /*
+        task "import+Binary$cleanParentPath+$cleanFileName"(type: com.marklogic.gradle.task.MlcpTask) {
+            classpath = configurations.mlcp
+            command = "IMPORT"
+            port = Integer.parseInt(mlFinalPort)
+            database = mlFinalDbName
+            input_file_path = parentFullPath
+            input_file_pattern = fileName
+            output_collections = "input,binary,$fileExt,$parentPath/$cleanFileName"
+            output_permissions = "rest-reader,read,rest-writer,update"
+            document_type = "binary"
+            output_uri_replace = ".*$fileName,''"
+            output_uri_prefix = "$parentPath/$cleanFileName"
+        }
+        */
+    }
+}
+task importData(dependsOn: tasks.matching {Task task -> task.name.startsWith("import+")})
+
+class CustomDeleteCollectionsTask extends com.marklogic.gradle.task.datamovement.DataMovementTask {
+	String[] collections
+
+	@org.gradle.api.tasks.TaskAction
+	void deleteCollections() {
+        project.ext.collections = (collections != null && collections.length > 0) ? collections.join(",") : null
+		runQueryBatcherJob(new com.marklogic.client.ext.datamovement.job.DeleteCollectionsJob())
+	}
+}
+task deleteStagingData(type: CustomDeleteCollectionsTask) {
+    client = hubConfig.newStagingClient()
+    collections = ["input"]
+}
+task deleteFinalData(type: CustomDeleteCollectionsTask) {
+    client = hubConfig.newFinalClient()
+    collections = ["input","FootballPlayer"]
+}
+
+task deleteAllData(dependsOn: [deleteStagingData,deleteFinalData])
+
+importData.mustRunAfter deleteAllData
+
+task resetData(dependsOn:[deleteAllData,importData])

@@ -1,0 +1,16 @@
+{
+  "FootballPlayer" : {
+    "x" : 89,
+    "y" : 125,
+    "width" : 350,
+    "height" : 232,
+    "vertices" : { }
+  },
+  "FootballTeam" : {
+    "x" : 591,
+    "y" : 236,
+    "width" : 350,
+    "height" : 144,
+    "vertices" : { }
+  }
+}
